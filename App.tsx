@@ -398,7 +398,11 @@ useEffect(() => {
 
       cloudReadyRef.current = true;
       skipCloudSyncRef.current = true;
-      setTransactions(prev => mergeById(cloud, prev));
+      // 修正：只要雲端有資料，就直接「覆蓋」本地，不要合併
+      // 這樣你在 Sheet 刪掉資料後，App 才會跟著刪除
+      if (cloud.length > 0) {
+        setTransactions(cloud);
+      }
       notify("success", "雲端資料載入完成");
     } catch (e) {
       cloudReadyRef.current = true;
