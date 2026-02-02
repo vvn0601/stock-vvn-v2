@@ -887,7 +887,42 @@ const realizedPriceGain = useMemo(() => {
     }));
     notify('success', `已成功還款 $${repayAmount.toLocaleString()}`);
   };
+// ✅ 新增：結算獲利並上傳到雲端 (不影響主程式運作)
+  const handleRecordRealizedGain = async (sellTxn: Transaction, buyCost: number) => {
+    if (!scriptUrl) return; // 沒綁定就不上傳
 
+    // 淨利 = (賣出總價 - 賣出手續費 - 賣出稅) - (買入成本含手續費)
+    const netProfit = (sellTxn.price * sellTxn.qty) - sellTxn.fee - sellTxn.tax - buyCost;
+
+    const realizedRecord = {
+      id: Date.now().toString(),
+      date: sellTxn.date,
+      code: sellTxn.code,
+      name: sellTxn.name,
+      qty: sellTxn.qty,
+      sellPrice: sellTxn.price,
+      totalCost: Math.round(buyCost), // 這一筆賣出的成本
+      netProfit: Math.round(netProfit),
+      note: "App 自動結算"
+    };
+
+    try {
+      // 呼叫 api/realized.js
+      await fetch(apiUrl("/api/realized"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scriptUrl: scriptUrl,
+          record: realizedRecord
+        })
+      });
+      notify('success', `已記錄獲利：${formatNumber(Math.round(netProfit))}`);
+    } catch (e) {
+      console.error(e);
+      notify('error', '上傳獲利紀錄失敗');
+    }
+  };
+  
   const handleAddTransaction = async () => {
     if (!formData.code || !formData.price || !formData.qty) return alert("請填寫完整交易資料");
     const code = formData.code.toUpperCase().trim();
@@ -905,6 +940,18 @@ const realizedPriceGain = useMemo(() => {
       fee: calculatedFee,
       tax: txnType === TransactionType.SELL ? calculatedTax : 0
     };
+    // ★ 新增：獲利結算觸發點
+    if (txnType === TransactionType.SELL && !formData.id) {
+       // 1. 從目前的持股清單 (holdings) 抓出這檔股票的「平均成本」
+       const targetStock = holdings.filter(h => h.code === code)[0]; // 確保只抓第一筆
+       const currentAvgCost = targetStock ? targetStock.avgCost : 0;
+
+       // 2. 算出這次賣出的股份，當初是用多少錢買的
+       const costOfSoldShares = currentAvgCost * qtyNum;
+
+       // 3. 呼叫剛剛寫好的工具傳送給 Google Sheet (背景執行)
+       handleRecordRealizedGain(newTxn, costOfSoldShares);
+    }
     if (formData.id) setTransactions(prev => prev.map(t => t.id === formData.id ? newTxn : t));
     else setTransactions(prev => [newTxn, ...prev]);
     setFormData({ id: "", date: new Date().toISOString().slice(0, 10).replace(/-/g, '/'), code: "", name: "", price: "", qty: "", feeAuto: true, feeCustom: "", taxAuto: true, taxCustom: "" });
