@@ -35,7 +35,7 @@ export default async function handler(req, res) {
   // 取得關鍵參數
   // 支援 GET (從網址列) 或 POST (從 body)
   const scriptUrl = req.query.scriptUrl || body?.scriptUrl;
-  const sheetName = req.query.sheetName || body?.sheetName || ''; 
+  const sheetName = req.query.sheetName || body?.sheetName || 'Realized'; 
   const record = body?.record || [];
 
   if (!scriptUrl) {
