@@ -82,7 +82,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {[
           { label: '資產總計', value: `${kpiView === 'US' ? '$' : 'NT$'} ${formatNumber(kpiData.totalVal)}`, icon: <Icons.Wallet size={20} />, sub: `成本 ${formatNumber(kpiData.totalCost)}`, color: 'text-blue-400', bg: 'bg-blue-500/10' },
           { label: '未實現損益', value: `${kpiData.pl > 0 ? '+' : ''}${formatNumber(kpiData.pl)}`, icon: <Icons.TrendingUp size={20} />, sub: `${kpiData.plRate.toFixed(2)}% 報酬率`, color: kpiData.pl > 0 ? 'text-emerald-400' : kpiData.pl < 0 ? 'text-rose-400' : 'text-slate-100', bg: kpiData.pl >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10' },
-          { label: '已實現損益', value: `NT$ ${formatNumber(realizedGain + totalInterest)}`, icon: <Icons.PieChart size={20} />, sub: `累積股息 NT$ ${formatNumber(totalInterest)}`, color: (realizedGain + totalInterest) >= 0 ? 'text-indigo-400' : 'text-rose-400', bg: 'bg-indigo-500/10' }, // 👈 檢查這個結尾逗點
+         { 
+label: '已實現損益', 
+  value: `${kpiView === 'US' ? '$' : 'NT$'} ${formatNumber(
+    kpiView === 'US' ? realizedGain : realizedGain + totalInterest
+  )}`, 
+  icon: <Icons.PieChart size={20} />, 
+  sub: kpiView === 'US' ? '純美股交易獲利' : `累積股息 NT$ ${formatNumber(totalInterest)}`, 
+  color: (realizedGain + (kpiView === 'US' ? 0 : totalInterest)) >= 0 ? 'text-indigo-400' : 'text-rose-400', 
+  bg: 'bg-indigo-500/10' 
+},
+
 
           // 👇 請補回這一段（這是原本的第 4 個）：
           { 
