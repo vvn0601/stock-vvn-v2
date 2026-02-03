@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  MarketType, TransactionType, Transaction, Holding, Debt, KpiData, SipFrequency, SipPlan, Repayment,InterestRecord // 👈 (1) 加入這個
+  MarketType, TransactionType, Transaction, Holding, Debt, KpiData, SipFrequency, SipPlan, Repayment,InterestRecord,RealizedRecord  // 👈 (1) 加入這個
 } from './types';
 import { STOCK_MAP, Icons } from './constants';
 import { fetchStockPrice, fetchExchangeRate } from './services/stockService';
@@ -255,6 +255,28 @@ useEffect(() => {
     } catch { return ""; }
   });
 
+  // ✅ (2) 新增：計算已實現損益的輔助函式
+const calculateRealizedProfit = (
+  // 這裡我們暫時傳入 "分別算好的 TWD 與 USD 總額"，簡化計算
+  twdGain: number,
+  usdGain: number,
+  currentTab: string, 
+  exchangeRate: number
+) => {
+  // 情況 A: 只看美股 -> 回傳 USD (不換算)
+  if (currentTab === 'US') {
+    return usdGain;
+  }
+  
+  // 情況 B: 只看台股 -> 回傳 TWD
+  if (currentTab === 'TW') {
+    return twdGain;
+  }
+
+  // 情況 C: 全部 -> TWD + (USD * 匯率)
+  return twdGain + Math.floor(usdGain * exchangeRate);
+};
+  
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.SCRIPT_URL, scriptUrl);
   }, [scriptUrl]);
@@ -598,38 +620,48 @@ useEffect(() => {
     return unique.length > 0 ? unique : ['2330', '0050', 'AAPL'];
   }, [transactions]);
 
-  // ✅ 計算已實現價差損益 (賣出獲利 - 賣出成本)
-const realizedPriceGain = useMemo(() => {
-  let totalGain = 0;
-  const costBasisMap: Record<string, { qty: number; totalCost: number }> = {};
+   // ✅ (3) 修改：已實現損益計算 (區分 TWD 與 USD)
+  const realizedPriceGain = useMemo(() => {
+    let gainTWD = 0;
+    let gainUSD = 0;
+    const costBasisMap: Record<string, { qty: number; totalCost: number }> = {};
+    
+    // 必須按日期排序確保計算正確
+    const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
   
-  // 必須按日期排序確保計算正確
-  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
-
-  sorted.forEach(t => {
-    const code = t.code;
-    if (!costBasisMap[code]) costBasisMap[code] = { qty: 0, totalCost: 0 };
-
-    if (t.type === TransactionType.BUY) {
-      costBasisMap[code].qty += t.qty;
-      costBasisMap[code].totalCost += (t.price * t.qty) + t.fee;
-    } else {
-      const avgCost = costBasisMap[code].qty > 0 ? costBasisMap[code].totalCost / costBasisMap[code].qty : 0;
-      const sellProceeds = (t.price * t.qty) - t.fee - (t.tax || 0);
-      const costOfSoldShares = avgCost * t.qty;
-
-      totalGain += (sellProceeds - costOfSoldShares);
-
-      costBasisMap[code].qty -= t.qty;
-      costBasisMap[code].totalCost -= costOfSoldShares;
-      if (costBasisMap[code].qty < 0.000001) {
-        costBasisMap[code].qty = 0;
-        costBasisMap[code].totalCost = 0;
+    sorted.forEach(t => {
+      const code = t.code;
+      if (!costBasisMap[code]) costBasisMap[code] = { qty: 0, totalCost: 0 };
+  
+      if (t.type === TransactionType.BUY) {
+        costBasisMap[code].qty += t.qty;
+        costBasisMap[code].totalCost += (t.price * t.qty) + t.fee;
+      } else {
+        const avgCost = costBasisMap[code].qty > 0 ? costBasisMap[code].totalCost / costBasisMap[code].qty : 0;
+        const sellProceeds = (t.price * t.qty) - t.fee - (t.tax || 0);
+        const costOfSoldShares = avgCost * t.qty;
+        
+        // 算出這一筆的獲利
+        const profit = sellProceeds - costOfSoldShares;
+  
+        // 🔥 根據市場分流
+        if (t.market === MarketType.US) {
+          gainUSD += profit;
+        } else {
+          gainTWD += profit;
+        }
+  
+        costBasisMap[code].qty -= t.qty;
+        costBasisMap[code].totalCost -= costOfSoldShares;
+        if (costBasisMap[code].qty < 0.000001) {
+          costBasisMap[code].qty = 0;
+          costBasisMap[code].totalCost = 0;
+        }
       }
-    }
-  });
-  return totalGain;
-}, [transactions]);
+    });
+    
+    return { twd: Math.round(gainTWD), usd: Number(gainUSD.toFixed(2)) };
+  }, [transactions]);
 
   // 修正後的 Holdings 計算 (終極版：支援 ETF 0.1% 稅率 + 扣除賣出手續費)
   const holdings = useMemo(() => {
@@ -892,35 +924,48 @@ const realizedPriceGain = useMemo(() => {
     notify('success', `已成功還款 $${repayAmount.toLocaleString()}`);
   };
 // ✅ 新增：結算獲利並上傳到雲端 (不影響主程式運作)
+    // ✅ (4) 修改：結算獲利並上傳 (支援 TWD/USD 分流)
   const handleRecordRealizedGain = async (sellTxn: Transaction, buyCost: number) => {
-    if (!scriptUrl) return; // 沒綁定就不上傳
+    if (!scriptUrl) return; 
 
-    // 淨利 = (賣出總價 - 賣出手續費 - 賣出稅) - (買入成本含手續費)
-    const netProfit = (sellTxn.price * sellTxn.qty) - sellTxn.fee - sellTxn.tax - buyCost;
+    // 原始淨利數字
+    const rawProfit = (sellTxn.price * sellTxn.qty) - sellTxn.fee - (sellTxn.tax || 0) - buyCost;
+    const isUS = sellTxn.market === MarketType.US;
 
-    const realizedRecord = {
+    const realizedRecord: RealizedRecord = { // 指定型別確保安全
       id: Date.now().toString(),
       date: sellTxn.date,
+      market: sellTxn.market, // 必填
       code: sellTxn.code,
       name: sellTxn.name,
       qty: sellTxn.qty,
       sellPrice: sellTxn.price,
-      totalCost: Math.round(buyCost), // 這一筆賣出的成本
-      netProfit: Math.round(netProfit),
+      totalCost: Number(buyCost.toFixed(2)), 
+      
+      // 🔥 核心修改：分流寫入
+      // 美股：TWD=0, USD=保留小數
+      // 台股：TWD=四捨五入, USD=0
+      netProfitTWD: isUS ? 0 : Math.round(rawProfit),
+      netProfitUSD: isUS ? Number(rawProfit.toFixed(2)) : 0,
+      
       note: "App 自動結算"
     };
 
     try {
-      // 呼叫 api/realized.js
       await fetch(apiUrl("/api/realized"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scriptUrl: scriptUrl,
+          sheetName: "Realized", // 確保指名寫入 Realized 分頁
           record: realizedRecord
         })
       });
-      notify('success', `已記錄獲利：${formatNumber(Math.round(netProfit))}`);
+      
+      // 顯示通知時，也可以聰明一點
+      const displayProfit = isUS ? `$${realizedRecord.netProfitUSD}` : `NT$${realizedRecord.netProfitTWD}`;
+      notify('success', `已記錄獲利：${displayProfit}`);
+      
     } catch (e) {
       console.error(e);
       notify('error', '上傳獲利紀錄失敗');
@@ -1137,7 +1182,13 @@ const realizedPriceGain = useMemo(() => {
           setScriptUrl={setScriptUrl}
           notify={notify}
           totalInterest={totalActualInterest}
-          realizedGain={realizedPriceGain} // 👈 補上這行
+          // ✅ (5) 修改這裡：呼叫 helper 算出當下要顯示的數字
+          realizedGain={calculateRealizedProfit(
+            realizedPriceGain.twd, 
+            realizedPriceGain.usd, 
+            kpiView, 
+            exchangeRate
+          )} 
         />
 
         <InventorySection 
