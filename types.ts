@@ -25,6 +25,24 @@ export interface InterestRecord {
   perShareDividend?: number; // 單股股利 (選填，僅供記錄參考)
   cashDividend: number;      // 現金股利 (實際入帳金額，這是計算重點)
 }
+// 對應新的 GAS Realized 分頁格式
+export interface RealizedRecord {
+  id: string;
+  date: string;
+  market: MarketType; // 必填，用來區分 TW/US
+  code: string;
+  name: string;
+  qty: number;
+  sellPrice: number;
+  totalCost: number;
+  
+  // 🔥 新增這兩個關鍵欄位
+  netProfitTWD: number; 
+  netProfitUSD: number; 
+  
+  note?: string;
+}
+
 export interface Transaction {
   id: string;
   date: string;
